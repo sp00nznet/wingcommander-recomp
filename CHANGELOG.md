@@ -20,8 +20,8 @@ versions follow [SemVer](https://semver.org/).
   new-pilot sign-in in the simulator cockpit; stops there (typing does not
   reach the sign-in). `tools/wc1_seeds.txt`: the 60 entry points the runs
   found. `--keys` knows every letter and digit.
-- Wing Commander II (`WC2.EXE`) lifts too (124 overlays) and builds as
-  `wingcommander2`; not run yet.
+- Wing Commander II (`WC2.EXE`) lifts too (124 overlays); its build (target
+  `wingcommander2`) was stopped half-way and has not been run.
 - `Setup.cmd`, a recomp-launcher manifest, the self-test (VGA, x87, OPL
   models; no game data), headless runs with scripted keys and screenshots.
 

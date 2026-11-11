@@ -13,7 +13,7 @@
   SKIP without game data, wired as the netlab QA beside the self-test.
 
 ## Then
-- Wing Commander II: `wingcommander2` lifts and builds; run its miss loop.
+- Wing Commander II: `wingcommander2` lifts; build it (one TU took over 2.5 GB in cl and was stopped) and run its miss loop.
   Its drivers are the same kind, so the capture should carry over.
 - The Secret Missions (`SM1\`, `SM2\` on the CD) are data for WC1, and
   Special Operations (`SO1.EXE`, `SO2.EXE`) are separate WC2 executables.
