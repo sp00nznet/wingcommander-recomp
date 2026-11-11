@@ -1,0 +1,845 @@
+/*
+ * host.c - the modern machine's side: a window (Win32 GDI and waveOut on
+ * Windows, SDL2 on Linux and macOS; nearest-neighbour, 4:3), audio, keyboard
+ * as raw PC scancodes -- or, with --headless,
+ * none of that: frames are composed offscreen and, with --record, piped to
+ * ffmpeg with the audio muxed in at the end. Headless never touches the
+ * desktop, so it works over RDP and from CI (repo rules, section 13).
+ *
+ * Scripted input (--keys "ms:KEY,...") presses and releases keys at fixed
+ * points in emulated time, which is how the harness walks the menus.
+ */
+#include "machine.h"
+#include <ctype.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <mmsystem.h>
+#endif
+
+#define FRAME_MAX (3840 * 1200)                 /* 640x200 (21:9 and wider) at --hires 6 */
+static uint32_t frame[FRAME_MAX];
+static uint32_t big[FRAME_MAX];
+static int fw = 320, fh = 200;
+static int scan_rows = 200;                     /* the CRT's rows behind the frame */
+static int hires_on;
+int hires_compose(uint32_t *out, int S, int *w, int *h);
+void hires_set_wide(double aspect);
+int hires_wide_cols(void);
+static double wide_aspect, frame_aspect = 4.0 / 3;   /* the chosen widescreen; this frame's shape */
+static int wide_on;
+
+/* What is on screen now: the hi-res renderer's frame when it is on and the
+ * game is in its 3D mode, the plain VGA picture otherwise. */
+static void compose(void)
+{
+    if (hires_on && g_opt.hires > 0 && hires_compose(frame, g_opt.hires, &fw, &fh)) {
+        scan_rows = 200;
+        frame_aspect = 4.0 / 3 * fw / (320.0 * g_opt.hires);   /* 320 columns show at 4:3 */
+        return;
+    }
+    vga_compose(frame, &fw, &fh);
+    scan_rows = fh;
+    frame_aspect = 4.0 / 3;
+}
+
+/* ---- recording ------------------------------------------------------------ */
+
+#define REC_FPS 35
+static FILE *rec_video, *rec_audio;
+static uint64_t rec_frames, rec_samples;
+static char rec_vpath[512], rec_apath[512];
+
+static void wav_header(FILE *f, uint32_t frames)
+{
+    uint32_t data = frames * 4, riff = 36 + data, rate = AUDIO_RATE, br = AUDIO_RATE * 4, fmt = 16;
+    uint16_t pcm = 1, ch = 2, ba = 4, bits = 16;
+    fseek(f, 0, SEEK_SET);
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+    fwrite(&fmt, 4, 1, f); fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f);
+    fwrite(&br, 4, 1, f); fwrite(&ba, 2, 1, f); fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&data, 4, 1, f);
+}
+
+static int rec_w = 640, rec_h = 400;
+
+static void rec_open(void)
+{
+    if (g_opt.hires > 0) { rec_w = (320 + 2 * hires_wide_cols()) * g_opt.hires; rec_h = 200 * g_opt.hires; }
+    snprintf(rec_vpath, sizeof rec_vpath, "%s.video.mp4", g_opt.record);
+    snprintf(rec_apath, sizeof rec_apath, "%s.audio.wav", g_opt.record);
+    char cmd[1200];
+    snprintf(cmd, sizeof cmd,
+             "ffmpeg -y -loglevel error -f rawvideo -pixel_format bgra -video_size %dx%d "
+             "-framerate %d -i - -vf scale=%d:%d:flags=neighbor -c:v libx264 -pix_fmt yuv420p "
+             "-crf 18 \"%s\"", rec_w, rec_h, REC_FPS, rec_w < 1280 ? 1280 : rec_w,
+             (rec_w < 1280 ? 1280 : rec_w) * 3 / 4, rec_vpath);
+    rec_video = _popen(cmd, "wb");
+    if (!rec_video) fatal("cannot start ffmpeg (is it on PATH?)");
+    rec_audio = fopen(rec_apath, "wb");
+    if (rec_audio) wav_header(rec_audio, 0);
+}
+
+static void rec_close(void)
+{
+    if (!rec_video) return;
+    _pclose(rec_video);
+    rec_video = NULL;
+    if (rec_audio) { wav_header(rec_audio, (uint32_t)rec_samples); fclose(rec_audio); rec_audio = NULL; }
+    char cmd[1600];
+    snprintf(cmd, sizeof cmd, "ffmpeg -y -loglevel error -i \"%s\" -i \"%s\" -c:v copy -c:a aac -b:a 192k -shortest \"%s\"",
+             rec_vpath, rec_apath, g_opt.record);
+    if (system(cmd) == 0) { remove(rec_vpath); remove(rec_apath); }
+    fprintf(stderr, "[rec] %s: %llu frames\n", g_opt.record, (unsigned long long)rec_frames);
+}
+
+/* Every frame to the encoder at one size, whatever mode the game is in */
+static const uint32_t *as_rec(void)
+{
+    if (fw == rec_w && fh == rec_h) return frame;
+    for (int y = 0; y < rec_h; y++)
+        for (int x = 0; x < rec_w; x++)
+            big[y * rec_w + x] = frame[(y * fh / rec_h) * fw + x * fw / rec_w];
+    return big;
+}
+
+static FILE *wav_out;
+static uint64_t wav_samples;
+
+void host_snapshot(const char *path);
+
+/* --shot-at "ms:file,...": frames at fixed points in emulated time, for the
+ * conformance harness (tools/conformance.py) */
+static void shots_due(uint64_t now)
+{
+    static const char *p;
+    static int init;
+    if (!init) { init = 1; p = g_opt.shots; }
+    while (p && *p) {
+        double ms; char path[260]; int n = 0;
+        if (sscanf(p, "%lf:%259[^,]%n", &ms, path, &n) < 2) { p = NULL; return; }
+        if (now < (uint64_t)(ms * PIT_HZ / 1000.0)) return;
+        host_snapshot(path);
+        p += n; if (*p == ',') p++;
+    }
+}
+
+/* ---- scripted keys ----------------------------------------------------------- */
+
+typedef struct { uint64_t at; uint8_t sc; uint8_t up; int16_t x, y; } KeyEv;   /* sc 0: a click at x,y */
+static KeyEv kev[512];
+static int nkev, kev_i;
+
+static int key_by_name(const char *s)
+{
+    static const struct { const char *n; int sc; } t[] = {
+        {"ESC",1},{"ENTER",0x1C},{"SPACE",0x39},{"UP",0x48|0x100},{"DOWN",0x50|0x100},
+        {"LEFT",0x4B|0x100},{"RIGHT",0x4D|0x100},{"CTRL",0x1D},{"ALT",0x38},{"SHIFT",0x2A},
+        {"TAB",0x0F},{"BKSP",0x0E},{"Y",0x15},{"N",0x31},{"F1",0x3B},{"F2",0x3C},{"F3",0x3D},
+        {"F10",0x44},{"1",2},{"2",3},{"3",4},{"4",5},{"5",6},{"6",7},{NULL,0}};
+    for (int i = 0; t[i].n; i++) if (!_stricmp(s, t[i].n)) return t[i].sc;
+    return (int)strtol(s, NULL, 16);
+}
+
+static void keys_parse(void)
+{
+    const char *p = g_opt.keys;
+    while (p && *p && nkev < 500) {
+        char name[32]; double ms; int hold = 120, n = 0;
+        if (sscanf(p, "%lf:%31[^,]%n", &ms, name, &n) < 2) break;
+        char *h = strchr(name, '+');            /* KEY+holdms */
+        if (h) { *h = 0; hold = atoi(h + 1); }
+        uint64_t at = (uint64_t)(ms * PIT_HZ / 1000.0);
+        int cx, cy;
+        if (sscanf(name, "CLICK@%d;%d", &cx, &cy) == 2) {   /* left click at game coordinates */
+            kev[nkev++] = (KeyEv){ at, 0, 0, (int16_t)cx, (int16_t)cy };
+            kev[nkev++] = (KeyEv){ at + (uint64_t)(hold * PIT_HZ / 1000.0), 0, 1, (int16_t)cx, (int16_t)cy };
+            p += n; if (*p == ',') p++;
+            continue;
+        }
+        int sc = key_by_name(name);
+        kev[nkev++] = (KeyEv){ at, (uint8_t)sc, 0, 0, 0 };
+        kev[nkev++] = (KeyEv){ at + (uint64_t)(hold * PIT_HZ / 1000.0), (uint8_t)sc, 1, 0, 0 };
+        p += n; if (*p == ',') p++;
+    }
+    /* sort by time (insertion; small) */
+    for (int i = 1; i < nkev; i++)
+        for (int j = i; j > 0 && kev[j].at < kev[j - 1].at; j--) { KeyEv t = kev[j]; kev[j] = kev[j - 1]; kev[j - 1] = t; }
+}
+
+static int ext_of(int sc) { return sc == 0x48 || sc == 0x50 || sc == 0x4B || sc == 0x4D; }
+
+static void keys_due(void)
+{
+    while (kev_i < nkev && kev[kev_i].at <= pit_now()) {
+        int sc = kev[kev_i].sc;
+        if (!sc) { mouse_set(kev[kev_i].x, kev[kev_i].y, kev[kev_i].up ? 0 : 1); kev_i++; continue; }
+        if (ext_of(sc)) kbd_scancode(0xE0);
+        kbd_scancode((uint8_t)(sc | (kev[kev_i].up ? 0x80 : 0)));
+        kev_i++;
+    }
+}
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+/* ---- autopilot (--route) ------------------------------------------------------
+ *
+ * Key timings are fine for menus but drift on a walk across a map, so a test
+ * run can steer instead: from a start time it walks the player to waypoints,
+ * reading where the player is each frame and pressing the keys a player would.
+ * Headless time is deterministic, so a route lands the same way every run.
+ *
+ *   --route "47000;go 37.5,48;fire 3000;go 37.5,42.5;face 180;use;wait 1000"
+ *
+ *   go X,Y    turn toward the point (tiles) and walk until within a quarter tile
+ *   face A    turn to angle A (degrees: 0 east, 90 north)
+ *   use       press SPACE          fire MS   hold CTRL for MS
+ *   key K     press key K          wait MS   do nothing for MS
+ *
+ * Each finished step is logged as "[route] ..."; a step that makes no progress
+ * for 4 s is logged as stuck and skipped. */
+int hires_player(double *x, double *y, int *angle);
+
+typedef struct { char op; double a, b; int k; } RouteStep;
+static RouteStep route[128];
+static int nroute, route_i;
+static uint64_t route_at, step_at;
+static double step_best;
+static uint64_t step_best_at;
+static uint8_t route_down[0x200];
+
+static void route_key(int sc, int down)
+{
+    if (route_down[sc & 0x1FF] == down) return;
+    route_down[sc & 0x1FF] = (uint8_t)down;
+    if (ext_of(sc)) kbd_scancode(0xE0);
+    kbd_scancode((uint8_t)(sc | (down ? 0 : 0x80)));
+}
+
+static void route_release(void)
+{
+    for (int sc = 0; sc < 0x200; sc++) if (route_down[sc]) route_key(sc, 0);
+}
+
+static void route_parse(void)
+{
+    const char *p = g_opt.route;
+    if (!p) return;
+    route_at = (uint64_t)(atof(p) * PIT_HZ / 1000.0);
+    while ((p = strchr(p, ';')) != NULL && nroute < 128) {
+        p++;
+        char op[16] = {0}, arg[32] = {0};
+        RouteStep s = {0};
+        sscanf(p, "%15[^ ;] %31[^;]", op, arg);
+        if (!strcmp(op, "go"))        { s.op = 'g'; sscanf(arg, "%lf,%lf", &s.a, &s.b); }
+        else if (!strcmp(op, "face")) { s.op = 'f'; s.a = atof(arg); }
+        else if (!strcmp(op, "use"))  { s.op = 'k'; s.k = key_by_name("SPACE"); s.a = 150; }
+        else if (!strcmp(op, "fire")) { s.op = 'k'; s.k = key_by_name("CTRL"); s.a = atof(arg); }
+        else if (!strcmp(op, "key"))  { s.op = 'k'; s.k = key_by_name(arg); s.a = 150; }
+        else if (!strcmp(op, "wait")) { s.op = 'w'; s.a = atof(arg); }
+        else { fprintf(stderr, "[route] unknown step '%s'\n", op); continue; }
+        route[nroute++] = s;
+    }
+}
+
+static void route_next(const char *how, double x, double y, int ang)
+{
+    route_release();
+    fprintf(stderr, "[route] step %d %s at %.2f,%.2f angle %d, t=%llu\n", route_i + 1, how, x, y, ang,
+            (unsigned long long)(pit_now() * 1000 / PIT_HZ));
+    route_i++;
+    step_at = pit_now();
+    step_best = 1e9;
+    step_best_at = step_at;
+    if (route_i == nroute) fprintf(stderr, "[route] done\n");
+}
+
+static void route_due(void)
+{
+    uint64_t now = pit_now();
+    if (route_i >= nroute || now < route_at) return;
+    double x, y; int ang;
+    if (!hires_player(&x, &y, &ang)) return;
+    if (!step_at) { step_at = now; step_best = 1e9; step_best_at = now; }
+    const RouteStep *s = &route[route_i];
+    double ms = (double)(now - step_at) * 1000 / PIT_HZ;
+    int left = key_by_name("LEFT"), right = key_by_name("RIGHT"), up = key_by_name("UP");
+    if (s->op == 'w') { if (ms >= s->a) route_next("waited", x, y, ang); return; }
+    if (s->op == 'k') {
+        route_key(s->k, ms < s->a);
+        if (ms >= s->a + 100) route_next("pressed", x, y, ang);   /* and let go */
+        return;
+    }
+    /* turning toward a heading: y grows southward, angles counterclockwise */
+    double want = s->op == 'f' ? s->a : atan2(y - s->b, s->a - x) * 180 / M_PI;
+    double err = fmod(want - ang + 540.0, 360.0) - 180.0;
+    double dist = s->op == 'g' ? hypot(s->a - x, s->b - y) : fabs(err);
+    double thr = s->op == 'f' ? 2 : 4;                 /* walking tolerates a little wander */
+    if (s->op == 'g' ? dist < 0.25 : fabs(err) <= thr) { route_next(s->op == 'g' ? "reached" : "faced", x, y, ang); return; }
+    if (dist < step_best - 0.05) { step_best = dist; step_best_at = now; }
+    double stalled = (double)(now - step_best_at) * 1000 / PIT_HZ;
+    if (stalled > 4000) { route_next("STUCK", x, y, ang); return; }
+    /* a walk that stalls is usually at a closed door: try it, as a player would */
+    route_key(key_by_name("SPACE"), s->op == 'g' && stalled > 800 && stalled < 950);
+    route_key(left, err > thr);
+    route_key(right, err < -thr);
+    route_key(up, s->op == 'g' && fabs(err) < 30);
+}
+
+/* ---- window ---------------------------------------------------------------- */
+
+static int quit_req;
+static int captured;
+
+/* F12: the current frame to screenshots/<game>-NNN.bmp */
+static void screenshot_key(void)
+{
+    char p[256];
+    _mkdir("screenshots");
+    for (int n = 0; n < 1000; n++) {
+        snprintf(p, sizeof p, "screenshots/%s-%03d.bmp", g_game_id, n);
+        FILE *f = fopen(p, "rb");
+        if (!f) { host_snapshot(p); return; }
+        fclose(f);
+    }
+}
+
+/* F10: widescreen -> original -> hi-res 4:3 -> */
+static void cycle_view(void)
+{
+    if (hires_on && wide_on) { hires_on = 0; wide_on = 0; }
+    else if (!hires_on) hires_on = 1;
+    else wide_on = 1;
+    hires_set_wide(wide_on ? wide_aspect : 0);
+}
+
+/* Display modes (F11 cycles, --display picks):
+ *   sharp  4:3, nearest neighbour -- what a 1993 monitor's geometry was
+ *   pixel  the largest whole multiple of the frame, square pixels (16:10)
+ *   crt    4:3 with scanlines: every source row lit in its middle and dimmed
+ *          at its edges, as an electron beam drew it                       */
+static const char *display_names[] = { "sharp", "pixel", "crt" };
+static int display_mode;
+static uint32_t *crt_buf;
+static size_t crt_cap;
+
+static void crt_compose(int w, int h)
+{
+    if ((size_t)w * h > crt_cap) {
+        free(crt_buf);
+        crt_cap = (size_t)w * h;
+        crt_buf = malloc(crt_cap * 4);
+    }
+    for (int y = 0; y < h; y++) {
+        /* where in its source row this output line falls: 0..255 */
+        int pos = (int)(((int64_t)y * scan_rows * 256 / h) & 255);
+        int d = pos < 128 ? pos : 255 - pos;          /* 0 at the edges, 127 mid-row */
+        int gain = 150 + d * 106 / 127;               /* 150..256: edges ~60% bright */
+        const uint32_t *src = frame + (y * fh / h) * fw;
+        uint32_t *o = crt_buf + (size_t)y * w;
+        for (int x = 0; x < w; x++) {
+            uint32_t p = src[x * fw / w];
+            uint32_t r = ((p >> 16) & 255) * gain >> 8, g = ((p >> 8) & 255) * gain >> 8,
+                     b = (p & 255) * gain >> 8;
+            o[x] = 0xFF000000u | r << 16 | g << 8 | b;
+        }
+    }
+}
+
+/* Where the frame goes in a cw x ch window, by display mode */
+static void fit(int cw, int ch, int *x, int *y, int *w, int *h)
+{
+    if (display_mode == 1) {                          /* pixel: whole multiples */
+        int k = cw / fw < ch / fh ? cw / fw : ch / fh;
+        if (k < 1) k = 1;
+        *w = fw * k; *h = fh * k;
+    } else {                                          /* sharp, crt: 4:3, or the widescreen's shape */
+        *w = cw; *h = (int)(cw / frame_aspect);
+        if (*h > ch) { *h = ch; *w = (int)(ch * frame_aspect); }
+    }
+    *x = (cw - *w) / 2; *y = (ch - *h) / 2;
+}
+
+/* Gamepad buttons, pressed as the keys the game already knows, so a pad works
+ * in the menus and in play with no joystick calibration. The games' own
+ * joystick support (port 201h) would want calibrating per session.
+ *   stick / d-pad  arrows        RT  Ctrl (fire)     LT  Alt (strafe)
+ *   A  Space (use)  X  Enter     RB  Right Shift (run)
+ *   B / Start  Esc               Back  Tab                               */
+enum { PAD_UP = 1, PAD_DOWN = 2, PAD_LEFT = 4, PAD_RIGHT = 8, PAD_FIRE = 16, PAD_STRAFE = 32,
+       PAD_USE = 64, PAD_ENTER = 128, PAD_RUN = 256, PAD_ESC = 512, PAD_TAB = 1024 };
+
+static void pad_keys(uint32_t now)
+{
+    static uint32_t held;
+    static const uint16_t sc[] = { 0x148, 0x150, 0x14B, 0x14D, 0x1D, 0x38, 0x39, 0x1C, 0x36, 0x01, 0x0F };
+    for (unsigned i = 0; i < sizeof sc / sizeof sc[0]; i++)
+        if ((now ^ held) & (1u << i)) {
+            if (sc[i] & 0x100) kbd_scancode(0xE0);
+            kbd_scancode((uint8_t)(sc[i] | ((now & (1u << i)) ? 0 : 0x80)));
+        }
+    held = now;
+}
+
+#ifdef _WIN32
+static HWND wnd;
+
+static int mouse_buttons_now(void)
+{
+    return ((GetKeyState(VK_LBUTTON) < 0) ? 1 : 0) | ((GetKeyState(VK_RBUTTON) < 0) ? 2 : 0)
+         | ((GetKeyState(VK_MBUTTON) < 0) ? 4 : 0);
+}
+
+static BITMAPINFO bmi;
+
+static void toggle_fullscreen(void)
+{
+    static WINDOWPLACEMENT prev = { sizeof prev };
+    DWORD st = GetWindowLong(wnd, GWL_STYLE);
+    if (st & WS_OVERLAPPEDWINDOW) {
+        MONITORINFO mi = { sizeof mi };
+        GetWindowPlacement(wnd, &prev);
+        GetMonitorInfo(MonitorFromWindow(wnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+        SetWindowLong(wnd, GWL_STYLE, st & ~WS_OVERLAPPEDWINDOW);
+        SetWindowPos(wnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    } else {
+        SetWindowLong(wnd, GWL_STYLE, st | WS_OVERLAPPEDWINDOW);
+        SetWindowPlacement(wnd, &prev);
+        SetWindowPos(wnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+    }
+}
+
+static void paint(HDC dc)
+{
+    RECT r; GetClientRect(wnd, &r);
+    int cw = r.right, ch = r.bottom, x, y, w, h;
+    fit(cw, ch, &x, &y, &w, &h);
+    PatBlt(dc, 0, 0, cw, y, BLACKNESS); PatBlt(dc, 0, y + h, cw, ch - y - h, BLACKNESS);
+    PatBlt(dc, 0, 0, x, ch, BLACKNESS); PatBlt(dc, x + w, 0, cw - x - w, ch, BLACKNESS);
+    if (display_mode == 2 && h >= scan_rows * 2) {
+        crt_compose(w, h);
+        bmi.bmiHeader.biWidth = w; bmi.bmiHeader.biHeight = -h;
+        SetDIBitsToDevice(dc, x, y, w, h, 0, 0, 0, h, crt_buf, &bmi, DIB_RGB_COLORS);
+        return;
+    }
+    bmi.bmiHeader.biWidth = fw; bmi.bmiHeader.biHeight = -fh;
+    SetStretchBltMode(dc, COLORONCOLOR);
+    StretchDIBits(dc, x, y, w, h, 0, 0, fw, fh, frame, &bmi, DIB_RGB_COLORS, SRCCOPY);
+}
+
+static LRESULT CALLBACK wndproc(HWND h, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_CLOSE: quit_req = 1; return 0;
+    case WM_PAINT: { PAINTSTRUCT ps; HDC dc = BeginPaint(h, &ps); paint(dc); EndPaint(h, &ps); return 0; }
+    case WM_ERASEBKGND: return 1;
+    case WM_SYSKEYDOWN: case WM_KEYDOWN: case WM_SYSKEYUP: case WM_KEYUP: {
+        int up = (m == WM_KEYUP || m == WM_SYSKEYUP);
+        if (wp == VK_RETURN && (lp & (1 << 29))) { if (!up) toggle_fullscreen(); return 0; }
+        if (wp == VK_F4 && (lp & (1 << 29))) { quit_req = 1; return 0; }
+        if (wp == VK_F12) { if (!up) screenshot_key(); return 0; }
+        if (wp == VK_F10) {                           /* widescreen -> original -> hi-res 4:3 -> */
+            if (!up) { cycle_view(); InvalidateRect(h, NULL, TRUE); }
+            return 0;
+        }
+        if (wp == VK_F11) { if (!up) { display_mode = (display_mode + 1) % 3; InvalidateRect(h, NULL, FALSE); } return 0; }
+        if (!up && (lp & (1 << 30))) return 0;      /* the game does its own repeat */
+        int sc = (lp >> 16) & 0xFF;
+        if (lp & (1 << 24)) kbd_scancode(0xE0);
+        kbd_scancode((uint8_t)(sc | (up ? 0x80 : 0)));
+        return 0;
+    }
+    case WM_SYSCHAR: return 0;                       /* no menu beep on Alt */
+
+    /* Mouse: click in the window to capture it (the game turns with it when
+     * MOUSE ENABLED is on in its options); leaving the window releases it.
+     * Raw input, so the motion is the device's, not the cursor's. */
+    /* Mouse: Mario Is Missing is point-and-click, so the game's cursor goes
+     * where the pointer is in the picture (the window's own cursor is hidden
+     * over it; the game draws one). */
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN: case WM_RBUTTONDOWN: case WM_MBUTTONDOWN:
+    case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: {
+        RECT r; GetClientRect(h, &r);
+        int x, y, w, hh; fit(r.right, r.bottom, &x, &y, &w, &hh);
+        if (w > 0 && hh > 0) {
+            double fx = (double)((short)LOWORD(lp) - x) / w, fy = (double)((short)HIWORD(lp) - y) / hh;
+            fx = fx < 0 ? 0 : fx > 0.9999 ? 0.9999 : fx; fy = fy < 0 ? 0 : fy > 0.9999 ? 0.9999 : fy;
+            mouse_abs(fx, fy, (int)(((wp & MK_LBUTTON) ? 1 : 0) | ((wp & MK_RBUTTON) ? 2 : 0) | ((wp & MK_MBUTTON) ? 4 : 0)));
+        }
+        if (m == WM_LBUTTONDOWN) SetCapture(h); else if (m == WM_LBUTTONUP) ReleaseCapture();
+        return 0;
+    }
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT) { SetCursor(NULL); return TRUE; }
+        break;
+    }
+    return DefWindowProcA(h, m, wp, lp);
+}
+
+/* waveOut: a ring the main thread fills and a few buffers cycling under it */
+#define WBUF 8
+#define WLEN 1024
+static HWAVEOUT wout;
+static WAVEHDR whdr[WBUF];
+static int16_t wdata[WBUF][WLEN * 2];
+static int wfill, wcur;
+
+static void wave_open(void)
+{
+    WAVEFORMATEX f = { WAVE_FORMAT_PCM, 2, AUDIO_RATE, AUDIO_RATE * 4, 4, 16, 0 };
+    if (waveOutOpen(&wout, WAVE_MAPPER, &f, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) { wout = NULL; return; }
+    for (int i = 0; i < WBUF; i++) {
+        whdr[i].lpData = (LPSTR)wdata[i]; whdr[i].dwBufferLength = WLEN * 4;
+        waveOutPrepareHeader(wout, &whdr[i], sizeof whdr[i]);
+        whdr[i].dwFlags |= WHDR_DONE;
+    }
+}
+
+static void wave_push(const int16_t *s, int frames)
+{
+    while (frames > 0) {
+        WAVEHDR *h = &whdr[wcur];
+        if (!(h->dwFlags & WHDR_DONE)) return;       /* all queued: drop rather than block */
+        int n = WLEN - wfill; if (n > frames) n = frames;
+        memcpy(&wdata[wcur][wfill * 2], s, n * 4);
+        wfill += n; s += n * 2; frames -= n;
+        if (wfill == WLEN) {
+            h->dwFlags &= ~WHDR_DONE;
+            waveOutWrite(wout, h, sizeof *h);
+            wfill = 0; wcur = (wcur + 1) % WBUF;
+        }
+    }
+}
+
+/* XInput, loaded if it is there: the pad as keys (pad_keys) */
+typedef DWORD (WINAPI *XInputGetState_t)(DWORD, void *);
+
+static void pad_poll(void)
+{
+    static XInputGetState_t get;
+    static int tried;
+    struct { DWORD packet; WORD buttons; BYTE lt, rt; SHORT lx, ly, rx, ry; } s;
+
+    if (!tried) {
+        HMODULE m;
+        tried = 1;
+        m = LoadLibraryA("xinput1_4.dll");
+        if (!m) m = LoadLibraryA("xinput9_1_0.dll");
+        if (m) get = (XInputGetState_t)GetProcAddress(m, "XInputGetState");
+    }
+    if (!get || get(0, &s) != ERROR_SUCCESS) return;
+
+    uint32_t now = 0;
+    WORD b = s.buttons;
+    if ((b & 0x0001) || s.ly >  12000) now |= PAD_UP;
+    if ((b & 0x0002) || s.ly < -12000) now |= PAD_DOWN;
+    if ((b & 0x0004) || s.lx < -12000) now |= PAD_LEFT;
+    if ((b & 0x0008) || s.lx >  12000) now |= PAD_RIGHT;
+    if (s.rt > 64) now |= PAD_FIRE;
+    if (s.lt > 64) now |= PAD_STRAFE;
+    if (b & 0x1000) now |= PAD_USE;                      /* A */
+    if (b & 0x4000) now |= PAD_ENTER;                    /* X */
+    if (b & 0x0200) now |= PAD_RUN;                      /* RB */
+    if (b & (0x2000 | 0x0010)) now |= PAD_ESC;           /* B, Start */
+    if (b & 0x0020) now |= PAD_TAB;                      /* Back */
+    pad_keys(now);
+}
+
+#else
+/* ---- Linux, macOS: SDL2 for the window, sound, keys, mouse and pad ---------- */
+#include <SDL.h>
+
+static SDL_Window *win;
+static SDL_Renderer *ren;
+static SDL_Texture *tex;
+static int tex_w, tex_h;
+static SDL_AudioDeviceID adev;
+static SDL_GameController *pad;
+
+/* SDL's scancodes are USB HID usages; the game wants the PC's set 1.
+ * 0x100 marks an E0-prefixed key, as key_by_name does. */
+static int pc_scancode(SDL_Scancode k)
+{
+    static const uint16_t t[0x66] = {
+        [4] = 0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32,   /* A-M */
+        0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C,         /* N-Z */
+        0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,                           /* 1-0 */
+        0x1C, 0x01, 0x0E, 0x0F, 0x39, 0x0C, 0x0D, 0x1A, 0x1B, 0x2B, 0x2B, 0x27, 0x28, 0x29,   /* Enter.. ` */
+        0x33, 0x34, 0x35, 0x3A,                                                               /* , . / Caps */
+        0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40, 0x41, 0x42, 0x43, 0x44, 0x57, 0x58,               /* F1-F12 */
+        0x137, 0x46, 0, 0x152, 0x147, 0x149, 0x153, 0x14F, 0x151,                             /* PrtSc..PgDn */
+        0x14D, 0x14B, 0x150, 0x148,                                                           /* arrows */
+        0x45, 0x135, 0x37, 0x4A, 0x4E, 0x11C,                                                 /* keypad */
+        0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49, 0x52, 0x53, 0x56 };
+    switch (k) {
+    case SDL_SCANCODE_LCTRL:  return 0x1D;
+    case SDL_SCANCODE_LSHIFT: return 0x2A;
+    case SDL_SCANCODE_LALT:   return 0x38;
+    case SDL_SCANCODE_LGUI:   return 0x15B;
+    case SDL_SCANCODE_RCTRL:  return 0x11D;
+    case SDL_SCANCODE_RSHIFT: return 0x36;
+    case SDL_SCANCODE_RALT:   return 0x138;
+    case SDL_SCANCODE_RGUI:   return 0x15C;
+    default: return (unsigned)k < sizeof t / sizeof t[0] ? t[k] : 0;
+    }
+}
+
+static int mouse_buttons_now(void)
+{
+    uint32_t b = SDL_GetMouseState(NULL, NULL);
+    return ((b & SDL_BUTTON_LMASK) ? 1 : 0) | ((b & SDL_BUTTON_RMASK) ? 2 : 0) | ((b & SDL_BUTTON_MMASK) ? 4 : 0);
+}
+
+static void release_mouse(void)
+{
+    if (captured) { SDL_SetRelativeMouseMode(SDL_FALSE); captured = 0; }
+}
+
+static void sdl_events(void)
+{
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+        case SDL_QUIT: quit_req = 1; break;
+        case SDL_KEYDOWN: case SDL_KEYUP: {
+            int up = e.type == SDL_KEYUP;
+            SDL_Scancode k = e.key.keysym.scancode;
+            int alt = (e.key.keysym.mod & KMOD_ALT) != 0;
+            if (k == SDL_SCANCODE_RETURN && alt) {
+                if (!up) SDL_SetWindowFullscreen(win, (SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN)
+                                                 ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                break;
+            }
+            if (k == SDL_SCANCODE_F4 && alt) { quit_req = 1; break; }
+            if (k == SDL_SCANCODE_F12) { if (!up) screenshot_key(); break; }
+            if (k == SDL_SCANCODE_F10) { if (!up) cycle_view(); break; }
+            if (k == SDL_SCANCODE_F11) { if (!up) display_mode = (display_mode + 1) % 3; break; }
+            if (e.key.repeat) break;                     /* the game does its own repeat */
+            int sc = pc_scancode(k);
+            if (!sc) break;
+            if (sc & 0x100) kbd_scancode(0xE0);
+            kbd_scancode((uint8_t)(sc | (up ? 0x80 : 0)));
+            break;
+        }
+        /* Mouse: click in the window to capture it (the game turns with it when
+         * MOUSE ENABLED is on in its options); losing focus releases it. */
+        case SDL_MOUSEBUTTONDOWN:
+            if (!captured) { SDL_SetRelativeMouseMode(SDL_TRUE); captured = 1; break; }
+            /* fall through */
+        case SDL_MOUSEBUTTONUP:
+            if (captured) mouse_host(0, 0, mouse_buttons_now());
+            break;
+        case SDL_MOUSEMOTION:
+            if (captured) mouse_host(e.motion.xrel, e.motion.yrel, mouse_buttons_now());
+            break;
+        case SDL_WINDOWEVENT:
+            if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) release_mouse();
+            break;
+        case SDL_CONTROLLERDEVICEADDED:
+            if (!pad) pad = SDL_GameControllerOpen(e.cdevice.which);
+            break;
+        case SDL_CONTROLLERDEVICEREMOVED:
+            if (pad && e.cdevice.which == SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(pad))) {
+                SDL_GameControllerClose(pad); pad = NULL; pad_keys(0);
+            }
+            break;
+        }
+    }
+}
+
+static void pad_poll(void)
+{
+    if (!pad) return;
+#define B(x) SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_##x)
+#define A(x) SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_##x)
+    uint32_t now = 0;
+    if (B(DPAD_UP)    || A(LEFTY) < -12000) now |= PAD_UP;     /* SDL's y grows downward */
+    if (B(DPAD_DOWN)  || A(LEFTY) >  12000) now |= PAD_DOWN;
+    if (B(DPAD_LEFT)  || A(LEFTX) < -12000) now |= PAD_LEFT;
+    if (B(DPAD_RIGHT) || A(LEFTX) >  12000) now |= PAD_RIGHT;
+    if (A(TRIGGERRIGHT) > 8000) now |= PAD_FIRE;
+    if (A(TRIGGERLEFT) > 8000) now |= PAD_STRAFE;
+    if (B(A)) now |= PAD_USE;
+    if (B(X)) now |= PAD_ENTER;
+    if (B(RIGHTSHOULDER)) now |= PAD_RUN;
+    if (B(B) || B(START)) now |= PAD_ESC;
+    if (B(BACK)) now |= PAD_TAB;
+#undef B
+#undef A
+    pad_keys(now);
+}
+
+static void upload(const uint32_t *px, int w, int h)
+{
+    if (!tex || w != tex_w || h != tex_h) {
+        if (tex) SDL_DestroyTexture(tex);
+        tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, w, h);
+        tex_w = w; tex_h = h;
+    }
+    SDL_UpdateTexture(tex, NULL, px, w * 4);
+}
+
+static void sdl_present(void)
+{
+    int cw, ch, x, y, w, h;
+    SDL_GetRendererOutputSize(ren, &cw, &ch);          /* pixels, not points, on a Retina screen */
+    fit(cw, ch, &x, &y, &w, &h);
+    if (display_mode == 2 && h >= scan_rows * 2) { crt_compose(w, h); upload(crt_buf, w, h); }
+    else upload(frame, fw, fh);
+    SDL_Rect r = { x, y, w, h };
+    SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+    SDL_RenderClear(ren);
+    SDL_RenderCopy(ren, tex, NULL, &r);
+    SDL_RenderPresent(ren);
+}
+
+static void sdl_open(void)
+{
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | (g_opt.mute ? 0 : SDL_INIT_AUDIO)) != 0)
+        fatal("SDL: %s", SDL_GetError());
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");    /* nearest neighbour */
+    int s = g_opt.scale ? g_opt.scale : 3;
+    int w = wide_on && hires_on ? (int)(240 * s * wide_aspect) : 320 * s;
+    win = SDL_CreateWindow("Wing Commander",
+                           SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w, 240 * s,
+                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI |
+                           (g_opt.fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+    if (!win) fatal("SDL: %s", SDL_GetError());
+    ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+    if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
+    if (!ren) fatal("SDL: %s", SDL_GetError());
+    for (int i = 0; i < SDL_NumJoysticks() && !pad; i++)
+        if (SDL_IsGameController(i)) pad = SDL_GameControllerOpen(i);
+    if (!g_opt.mute) {
+        SDL_AudioSpec want = { 0 };
+        want.freq = AUDIO_RATE; want.format = AUDIO_S16SYS; want.channels = 2; want.samples = 1024;
+        adev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+        if (adev) SDL_PauseAudioDevice(adev, 0);
+    }
+}
+#endif
+
+void host_audio(const int16_t *s, int frames)
+{
+    if (rec_audio) { fwrite(s, 4, frames, rec_audio); rec_samples += frames; }
+    if (wav_out) { fwrite(s, 4, frames, wav_out); wav_samples += frames; }
+#ifdef _WIN32
+    if (wout) wave_push(s, frames);
+#else
+    /* all queued (about 0.2 s): drop rather than block, as waveOut does */
+    if (adev && SDL_GetQueuedAudioSize(adev) < 8 * 1024 * 4) SDL_QueueAudio(adev, s, (uint32_t)frames * 4);
+#endif
+}
+
+void host_init(void)
+{
+    if (g_opt.hires < 0) g_opt.hires = g_opt.headless ? 0 : 4;   /* on in a window */
+    hires_on = g_opt.hires > 0;
+    /* widescreen: on in a window unless --widescreen off; "W:H" or a ratio */
+    const char *ws = g_opt.wide ? g_opt.wide : g_opt.headless ? "off" : "16:9";
+    double aw = 0, ah = 1;
+    if (sscanf(ws, "%lf:%lf", &aw, &ah) >= 1 && ah > 0) wide_aspect = aw / ah;
+    if (wide_aspect <= 4.0 / 3) wide_aspect = 0;
+    wide_on = wide_aspect > 0;
+    if (!wide_aspect) wide_aspect = 16.0 / 9;           /* what F10 turns on */
+    hires_set_wide(wide_on ? wide_aspect : 0);
+    keys_parse();
+    route_parse();
+    if (g_opt.record) rec_open();
+    if (g_opt.wav && (wav_out = fopen(g_opt.wav, "wb")) != NULL) wav_header(wav_out, 0);
+    if (g_opt.headless) return;
+    for (int i = 0; i < 3; i++)
+        if (g_opt.display && !strcmp(g_opt.display, display_names[i])) display_mode = i;
+#ifdef _WIN32
+    WNDCLASSA wc = {0};
+    wc.lpfnWndProc = wndproc; wc.hInstance = GetModuleHandle(NULL);
+    wc.hCursor = LoadCursor(NULL, IDC_ARROW); wc.lpszClassName = "bstone";
+    wc.hIcon = LoadIcon(GetModuleHandle(NULL), MAKEINTRESOURCE(1));
+    RegisterClassA(&wc);
+    int s = g_opt.scale ? g_opt.scale : 3;
+    RECT r = { 0, 0, wide_on && hires_on ? (int)(240 * s * wide_aspect) : 320 * s, 240 * s };
+    AdjustWindowRect(&r, WS_OVERLAPPEDWINDOW, FALSE);
+    wnd = CreateWindowA("bstone", "Wing Commander",
+                        WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
+                        r.right - r.left, r.bottom - r.top, NULL, NULL, wc.hInstance, NULL);
+    bmi.bmiHeader.biSize = sizeof bmi.bmiHeader;
+    bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32; bmi.bmiHeader.biCompression = BI_RGB;
+    if (g_opt.fullscreen) toggle_fullscreen();
+    if (!g_opt.mute) wave_open();
+#else
+    sdl_open();
+#endif
+}
+
+void host_frame(void)
+{
+    static uint64_t last_present;
+    keys_due();
+    route_due();
+    uint64_t now = pit_now();
+    shots_due(now);
+    { void hires_debug_pos(unsigned); hires_debug_pos((unsigned)(now * 1000 / PIT_HZ)); }
+    if (g_opt.seconds > 0 && now >= (uint64_t)(g_opt.seconds * PIT_HZ)) dos_exit(0);
+    if (rec_video) {
+        uint64_t per = (uint64_t)(PIT_HZ / REC_FPS);
+        if ((rec_frames + 1) * per <= now) {
+            compose();
+            const uint32_t *f = as_rec();
+            while ((rec_frames + 1) * per <= now) { fwrite(f, 4, (size_t)rec_w * rec_h, rec_video); rec_frames++; }
+        }
+    }
+#ifdef _WIN32
+    if (!wnd) return;
+    if (now - last_present < (uint64_t)(PIT_HZ / 70)) return;
+    last_present = now;
+    MSG msg;
+    while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
+    if (GetForegroundWindow() == wnd) pad_poll();
+    if (quit_req) dos_exit(0);
+    compose();
+    HDC dc = GetDC(wnd); paint(dc); ReleaseDC(wnd, dc);
+#else
+    if (!win) return;
+    if (now - last_present < (uint64_t)(PIT_HZ / 70)) return;
+    last_present = now;
+    sdl_events();
+    if (SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS) pad_poll();
+    if (quit_req) dos_exit(0);
+    compose();
+    sdl_present();
+#endif
+}
+
+/* The last thing on screen, as a BMP -- a run nobody watched still says where
+ * it got to. */
+void host_snapshot(const char *path)
+{
+    compose();
+    FILE *f = fopen(path, "wb");
+    if (!f) return;
+    uint32_t sz = 54 + fw * fh * 4, off = 54, hs = 40, zero = 0, img = fw * fh * 4;
+    int32_t w = fw, h = -fh; uint16_t planes = 1, bpp = 32;
+    fwrite("BM", 1, 2, f); fwrite(&sz, 4, 1, f); fwrite(&zero, 4, 1, f); fwrite(&off, 4, 1, f);
+    fwrite(&hs, 4, 1, f); fwrite(&w, 4, 1, f); fwrite(&h, 4, 1, f); fwrite(&planes, 2, 1, f);
+    fwrite(&bpp, 2, 1, f); fwrite(&zero, 4, 1, f); fwrite(&img, 4, 1, f);
+    fwrite(&zero, 4, 1, f); fwrite(&zero, 4, 1, f); fwrite(&zero, 4, 1, f); fwrite(&zero, 4, 1, f);
+    fwrite(frame, 4, fw * fh, f);
+    fclose(f);
+}
+
+void host_shutdown(void)
+{
+    rec_close();
+    if (wav_out) { wav_header(wav_out, (uint32_t)wav_samples); fclose(wav_out); wav_out = NULL; }
+#ifdef _WIN32
+    if (wout) { waveOutReset(wout); waveOutClose(wout); }
+    if (wnd) DestroyWindow(wnd);
+#else
+    if (adev) SDL_CloseAudioDevice(adev);
+    if (win) { SDL_DestroyWindow(win); SDL_Quit(); }
+#endif
+}

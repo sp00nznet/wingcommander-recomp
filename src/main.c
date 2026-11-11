@@ -1,0 +1,128 @@
+/*
+ * main.c - boot the lifted game on the DOS machine.
+ *
+ *   wingcommander [options] [-- game arguments]
+ *
+ *   --data DIR        the game's files (default: original/<game>)
+ *   --save DIR        CONFIG and saved games (default: saves/<game>)
+ *   --headless        no window, no audio device; time is deterministic
+ *   --realtime        headless, but run on the wall clock
+ *   --record OUT.mp4  record video + audio through ffmpeg (implies nothing else;
+ *                     combine with --headless for an unattended capture)
+ *   --seconds N       quit after N seconds of emulated time
+ *   --keys LIST       scripted input: "ms:KEY[+holdms],..." e.g. "4000:ENTER,6000:ESC"
+ *   --mute            silence
+ *   --scale N         window size, multiples of 320x240 (default 3)
+ *   --fullscreen      start fullscreen (Alt+Enter toggles)
+ *   --hires N         hi-res 3D view at N x 320x200 (default 4 in a window, 0 headless; F10 toggles)
+ *   --widescreen A    hi-res view widened to aspect A: 16:9, 21:9 or off (default 16:9
+ *                     in a window, off headless; F10 cycles it, original, 4:3)
+ *   --route "MS;go X,Y;use;..."  steer the player along waypoints (tests; see host.c)
+ *   --display MODE    sharp (4:3, default), pixel (whole multiples) or crt (F11 cycles)
+ *   --trace           log DOS calls to stderr
+ *   --shot FILE.bmp   write the last frame at exit
+ *   --shot-at LIST    frames at emulated times: "ms:file.bmp,..."
+ *   --wav OUT.wav     write the audio (no ffmpeg needed)
+ */
+#include "machine.h"
+#include <setjmp.h>
+#include <stdarg.h>
+#ifdef _WIN32
+#include <direct.h>
+#endif
+
+Options g_opt;
+extern jmp_buf g_exit_jmp;
+extern int g_exit_code;
+void host_snapshot(const char *path);
+
+void trace(const char *fmt, ...)
+{
+    if (!g_opt.trace) return;
+    va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+}
+
+void fatal(const char *fmt, ...)
+{
+    va_list ap; va_start(ap, fmt);
+    fprintf(stderr, "error: "); vfprintf(stderr, fmt, ap); fprintf(stderr, "\n");
+    va_end(ap);
+    exit(1);
+}
+
+static void mkdirs(const char *p)
+{
+    char b[512]; snprintf(b, sizeof b, "%s", p);
+    for (char *s = b + 1; *s; s++)
+        if (*s == '/' || *s == '\\') { char c = *s; *s = 0; _mkdir(b); *s = c; }
+    _mkdir(b);
+}
+
+int main(int argc, char **argv)
+{
+    static char data[512], save[512], tail[256];
+    const char *shot = NULL;
+    int hires_set = 0;
+    for (int i = 1; i < argc; i++) {
+        const char *a = argv[i];
+        const char *v = (i + 1 < argc) ? argv[i + 1] : NULL;
+        if (!strcmp(a, "--data") && v) { g_opt.datadir = v; i++; }
+        else if (!strcmp(a, "--save") && v) { g_opt.savedir = v; i++; }
+        else if (!strcmp(a, "--headless")) g_opt.headless = 1;
+        else if (!strcmp(a, "--record") && v) { g_opt.record = v; i++; }
+        else if (!strcmp(a, "--seconds") && v) { g_opt.seconds = atof(v); i++; }
+        else if (!strcmp(a, "--keys") && v) { g_opt.keys = v; i++; }
+        else if (!strcmp(a, "--shot-at") && v) { g_opt.shots = v; i++; }
+        else if (!strcmp(a, "--wav") && v) { g_opt.wav = v; i++; }
+        else if (!strcmp(a, "--mute")) g_opt.mute = 1;
+        else if (!strcmp(a, "--trace")) g_opt.trace = 1;
+        else if (!strcmp(a, "--scale") && v) { g_opt.scale = atoi(v); i++; }
+        else if (!strcmp(a, "--fullscreen")) g_opt.fullscreen = 1;
+        else if (!strcmp(a, "--realtime")) g_opt.realtime = 1;
+        else if (!strcmp(a, "--display") && v) { g_opt.display = v; i++; }
+        else if (!strcmp(a, "--hires") && v) { g_opt.hires = atoi(v); hires_set = 1; i++; }
+        else if (!strcmp(a, "--widescreen") && v) { g_opt.wide = v; i++; }
+        else if (!strcmp(a, "--route") && v) { g_opt.route = v; i++; }
+        else if (!strcmp(a, "--shot") && v) { shot = v; i++; }
+        else if (!strcmp(a, "--")) {
+            for (i++; i < argc; i++) {
+                if (tail[0]) strncat(tail, " ", sizeof tail - strlen(tail) - 1);
+                strncat(tail, argv[i], sizeof tail - strlen(tail) - 1);
+            }
+        } else { fprintf(stderr, "unknown option %s (see the top of src/main.c)\n", a); return 2; }
+    }
+    if (!g_opt.datadir) { snprintf(data, sizeof data, "original/%s", g_game_id); g_opt.datadir = data; }
+    if (!g_opt.savedir) { snprintf(save, sizeof save, "saves/%s", g_game_id); g_opt.savedir = save; }
+    g_opt.args = tail;
+    if (!hires_set) g_opt.hires = -1;
+    mkdirs(g_opt.savedir);
+
+    if (cpu_alloc_mem(&g_cpu) != 0) return 1;
+    vga_init();
+    audio_init();
+    machine_init();
+    host_init();
+    dos_boot(&g_cpu);
+    vga_start();
+
+    if (!setjmp(g_exit_jmp)) {
+        uint32_t entry = (uint32_t)g_entry_cs * 16 + g_entry_ip;
+        for (unsigned i = 0; i < g_func_count; i++)
+            if (g_funcs[i].addr == entry) { g_funcs[i].fn(&g_cpu); break; }
+        fprintf(stderr, "[dos] the program returned without exiting\n");
+    }
+    machine_report();
+    if (g_opt.trace) {                  /* text screen at exit: where a Quit() message lands */
+        void hires_report(void); hires_report();
+        for (int r = 0; r < 25; r++) {
+            char line[81]; int n = 0;
+            for (int x = 0; x < 80; x++) { uint8_t ch = g_cpu.mem[0xB8000 + (r * 80 + x) * 2]; line[n++] = ch >= 32 && ch < 127 ? ch : ' '; }
+            while (n && line[n - 1] == ' ') n--;
+            line[n] = 0; if (n) fprintf(stderr, "[text] %s\n", line);
+        }
+    }
+    { void vgaprof_report(void); vgaprof_report(); }
+    if (shot) host_snapshot(shot);
+    host_shutdown();
+    return g_exit_code;
+}

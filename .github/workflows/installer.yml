@@ -1,0 +1,20 @@
+# The installer for this commit (recomp-launcher with launcher/launcher.json).
+# Manual only while the repo is private (REPO_RULES section 8); on push and v*
+# tags once it is public, like the other recomps. The installer holds no game
+# code: it fetches this repo and pcrecomp as source and builds from the
+# player's own disc.
+name: installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    uses: sp00nznet/recomp-launcher/.github/workflows/installer.yml@v0.3.0
+    with:
+      launcher-ref: v0.3.0
+      name: WingCommander-Recomp-Installer
+      platforms: windows

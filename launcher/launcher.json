@@ -1,0 +1,17 @@
+{
+  "title": "Wing Commander (DOS)",
+  "repo": "sp00nznet/wingcommander-recomp",
+  "accent": "#3a6fd8",
+  "note": {
+    "windows": "The build takes a few minutes and under 1 GB. Python, CMake, Git and the Visual Studio Build Tools (about 2 GB) are installed if they are missing. Point it at the Wing Commander & Wing Commander II CD or a copy of its WC1 folder."
+  },
+  "game": {
+    "name": "Wing Commander",
+    "files": ["WC.EXE|WC1/WC.EXE|wc.exe|wc1/wc.exe"]
+  },
+  "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "pcrecomp-dos16-wc", "dir": "pcrecomp" }],
+  "setup": {
+    "windows": ["cmd", "/c", "Setup.cmd", "-Yes", "-GameDir", "{game}"]
+  },
+  "play": "Wing Commander*"
+}
