@@ -1,6 +1,6 @@
 # Wing Commander: Static Recompilation
 
-<img src="docs/screenshots/signin.png" width="480" alt="The Tiger's Claw simulator, where a new pilot signs in, running as recompiled native code">
+<img src="docs/screenshots/cockpit.png" width="480" alt="The Hornet cockpit on the first mission, Enyo system, running as recompiled native code">
 
 ## What it is
 
@@ -28,7 +28,7 @@ and before it [Corridor 7](https://github.com/sp00nznet/corridor7) and
 and the lifted C is generated on your machine into `work/` (gitignored).
 Nothing from the game is in this repository.
 
-## Status: **v0.1.0, early alpha. The intro, the copy check, the main menu and the pilot sign-in run; typing at the sign-in does not get through yet.**
+## Status: **v0.1.0, early alpha. In game: the first mission (Hornet, Enyo, Nav 1) flies, with keyboard control, from the sign-in through the bar, the barracks and the briefing.**
 
 | Area | State |
 |---|---|
@@ -38,8 +38,9 @@ Nothing from the game is in this repository.
 | EMS | ✅ detected and filled ("Expanded Memory fully used") |
 | The `.DRV` drivers it unpacks at run time | ✅ `TM.DRV` and `SUPERTM.DRV` captured at 36B4h and 3B93h on the first run and lifted on the next (pcrecomp `codeblob16`); 52 driver entries, no misses on the paths below |
 | Title, intro, main menu | ✅ the concert-hall intro, the Earth flyby and the credits; the *Claw Marks* copy question (answer it); "Start Vega Campaign" |
-| Pilot sign-in (the simulator screen) | ⚠️ draws, with the disc's saved pilot filled in, but keys typed there do not reach it and the screen stops updating |
-| The first mission | ❌ not reached |
+| Pilot sign-in (the simulator screen) | ✅ name and callsign typed in; the simulator high scores |
+| Bar, barracks, briefing, launch | ✅ hover labels and clicks; Halcyon's briefing plays through; the launch cut-scene |
+| The first mission | ✅ flies: throttle, stop and turning answer the keys, asteroids and the planet move past. Not yet flown to the end; untouched it hits an asteroid and the funeral plays |
 | Sound and music | ❌ not yet (no sound card configured) |
 | Wing Commander II (`wingcommander2`) | lifts (124 overlays, 2,076 functions); not built or run yet |
 | Headless mode | `--headless` with `--seconds`, `--keys`, `--shot-at`; `--record out.mp4` pipes to ffmpeg |
@@ -61,6 +62,8 @@ Real output of the recompiled game:
 | A Kilrathi fighter in the intro | The credits |
 | ![Main menu](docs/screenshots/menu.png) | ![Sign-in](docs/screenshots/signin.png) |
 | The main menu | The new pilot sign-in, in the simulator |
+| ![Cockpit](docs/screenshots/cockpit.png) | |
+| The first mission, in the Hornet's cockpit | |
 
 ## Getting Started
 
@@ -151,7 +154,7 @@ build\Release\selftest.exe                                         # the hardwar
 | `--realtime` | headless, but on the wall clock |
 | `--record OUT.mp4` | video and audio through ffmpeg |
 | `--seconds N` | quit after N seconds of emulated time |
-| `--keys LIST` | scripted input, `ms:KEY[+holdms],...` |
+| `--keys LIST` | scripted input, `ms:KEY[+holdms],...`; `CLICK@x;y` clicks and `MOVE@x;y` hovers at mouse coordinates (0-639, 0-199) |
 | `--shot FILE.bmp`, `--shot-at "ms:file.bmp,..."` | the last frame at exit, or frames at emulated times |
 | `--wav OUT.wav` | write the audio |
 | `--mute`, `--scale N`, `--fullscreen`, `--display sharp\|pixel\|crt` | sound off, window size, fullscreen (Alt+Enter toggles), display mode |

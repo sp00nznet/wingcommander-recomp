@@ -159,6 +159,11 @@ static void keys_parse(void)
             p += n; if (*p == ',') p++;
             continue;
         }
+        if (sscanf(name, "MOVE@%d;%d", &cx, &cy) == 2) {    /* pointer there, no button */
+            kev[nkev++] = (KeyEv){ at, 0, 1, (int16_t)cx, (int16_t)cy };
+            p += n; if (*p == ',') p++;
+            continue;
+        }
         int sc = key_by_name(name);
         kev[nkev++] = (KeyEv){ at, (uint8_t)sc, 0, 0, 0 };
         kev[nkev++] = (KeyEv){ at + (uint64_t)(hold * PIT_HZ / 1000.0), (uint8_t)sc, 1, 0, 0 };

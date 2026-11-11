@@ -95,13 +95,31 @@ table heuristics above) took it from a garbled start to:
 The miss list settles at 60 entries (4 in the image's start-up, 52 in the two
 drivers), committed as `tools/wc1_seeds.txt`.
 
-## 6. Where it stops
+## 6. Into the first mission
 
-At the sign-in, typed keys do not reach the field and the screen stops
-changing, while the game keeps mapping EMS pages and polls DOS `AH=0Bh` only
-occasionally. The cockpit installs the game's own keyboard handler; the next
-thing to check is whether it chains to the BIOS (the sign-in reads through
-DOS) and whether the frame loop is waiting on the timer driver.
+Typed keys do reach the sign-in; the earlier runs pressed them before the
+screen was up. The one fix the cockpit needed was a driver entry, `36B4:401D`,
+hit on the first flight frame (now in `tools/wc1_seeds.txt`); without it the
+ship died on launch.
+
+The menus hover before they click: a click lands on whatever the cursor
+highlighted on the previous frame, so a `CLICK@` with no `MOVE@` before it picks
+"Start Secret Missions". This headless script reaches the cockpit at about
+108 s (escape the intro, answer the copy question, which is then always
+Claw Marks page 43, sign in, leave the simulator, barracks, Mission Hangar):
+
+```
+6000:ESC,8000:ESC,10000:ESC,11000:2,11400:5,11800:0,12200:ENTER,
+13800:MOVE@167;57,14500:MOVE@168;57,15200:CLICK@168;57,16500:SPACE,
+21000:B,21500:L,22000:A,22500:I,23000:R,23500:ENTER,25000:R,25500:E,26000:D,26500:ENTER,
+30000:ESC,36000:MOVE@590;100,36800:MOVE@591;100,37500:CLICK@591;100,
+40000:MOVE@610;70,40800:CLICK@610;70
+```
+
+Then `BKSP` stops the ship and the arrows turn it.
+
+Open: flown untouched, the range to Nav 1 grows by about 6,000 km a second
+at 200 kps, so either the heading or the game's frame time is off.
 
 ## 7. Menus need the mouse; keys arrive late
 

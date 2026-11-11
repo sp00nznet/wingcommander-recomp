@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Next
-- The pilot sign-in: typed keys do not reach it and the screen stops
-  changing ([docs/lifting.md](docs/lifting.md), section 6). Then the bar,
-  the briefing, the launch and the first mission (Hornet, Enyo system).
+- The first mission: it flies; fly it to the end (Nav points, the
+  Kilrathi, landing) and check the speed (the range to Nav 1 grows about
+  30 times too fast) ([docs/lifting.md](docs/lifting.md), section 6).
 - `Setup.cmd` from a clean clone: it now runs the one capture round a fresh
   lift needs; not yet tried end to end.
 - Sound: the drivers are lifted, so the AdLib path should come for free once
