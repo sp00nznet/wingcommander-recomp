@@ -77,6 +77,34 @@ What is left to the miss loop: a corrupted state jumps to garbage, and
 garbage captures happen. `work/iter.sh` (local, not committed) keeps only
 misses in the image's code and in the two driver segments.
 
-## 5. Status of the miss loop
+## 5. How far it gets
 
-(filled in below as it converges)
+About fifteen capture-lift-build rounds (one new driver entry each, before the
+table heuristics above) took it from a garbled start to:
+
+- the intro (concert hall, Earth, the Kilrathi fighter, the credits) with no
+  misses;
+- the copy check, a question from the *Claw Marks* manual typed through DOS
+  `AH=07h` (headless runs ask the same one every time: page 31, Maniac's age,
+  23);
+- the main menu ("Start Vega Campaign", "Start Secret Missions"; the CD has no
+  Secret Missions data in `WC1\`, and the game says so);
+- the new-pilot sign-in, drawn in the Tiger's Claw simulator cockpit, with the
+  disc's `SAVEGAME.WLD` pilot filled in.
+
+The miss list settles at 60 entries (4 in the image's start-up, 52 in the two
+drivers), committed as `tools/wc1_seeds.txt`.
+
+## 6. Where it stops
+
+At the sign-in, typed keys do not reach the field and the screen stops
+changing, while the game keeps mapping EMS pages and polls DOS `AH=0Bh` only
+occasionally. The cockpit installs the game's own keyboard handler; the next
+thing to check is whether it chains to the BIOS (the sign-in reads through
+DOS) and whether the frame loop is waiting on the timer driver.
+
+## 7. Menus need the mouse; keys arrive late
+
+"Start Vega Campaign" is chosen with a click (`--keys 14000:CLICK@167;57`);
+Enter picks the highlighted Secret Missions. After the click the menu waits
+for a key, and the first one only starts the fade.

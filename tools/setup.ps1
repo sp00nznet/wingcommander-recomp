@@ -153,10 +153,17 @@ if ((Test-Path "work\wc1\gen\recomp_dispatch.c") -and -not $Force) {
 # ---- 5. build ----------------------------------------------------------------------
 Say "[5/6] Building (a few minutes)"
 Run "configuring" { cmake -B build -A Win32 "-DPCRECOMP_HOME=$pcr" }
-Run "compiling" { cmake --build build --config Release -- -m }
+Run "compiling" { cmake --build build --config Release --target wingcommander selftest -- -m }
 $exe = Join-Path $Root "build\Release\wingcommander.exe"
 if (-not (Test-Path $exe)) { Fail "The build finished but $exe is missing." }
 Run "self-test (the hardware models, no game data)" { & build\Release\selftest.exe }
+# The .DRV drivers exist only once the game has unpacked them: one headless run
+# captures them into work\wc1\blobs, then they are lifted and built in.
+if (-not (Test-Path "work\wc1\blobs\*.bin")) {
+    Run "capturing the drivers (one headless run)" { & $exe --headless --seconds 20 | Out-Null }
+    Run "lifting again, with the drivers" { & $py tools\lift.py wc1 }
+    Run "compiling again" { cmake --build build --config Release --target wingcommander -- -m }
+}
 
 # ---- 6. shortcut -------------------------------------------------------------------
 Say "[6/6] Making the shortcut"

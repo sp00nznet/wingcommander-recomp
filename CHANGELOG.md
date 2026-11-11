@@ -16,6 +16,10 @@ versions follow [SemVer](https://semver.org/).
   next (pcrecomp `runtime/recomp16/codeblob.h`, `tools/lift/codeblob16.py`),
   with three ways to find a driver's entries (unbounded `cs:` tables,
   `mov cs:[x], offset` pointers, pointer runs after a return).
+- Runs the intro, the *Claw Marks* copy question, the main menu and the
+  new-pilot sign-in in the simulator cockpit; stops there (typing does not
+  reach the sign-in). `tools/wc1_seeds.txt`: the 60 entry points the runs
+  found. `--keys` knows every letter and digit.
 - Wing Commander II (`WC2.EXE`) lifts too (124 overlays) and builds as
   `wingcommander2`; not run yet.
 - `Setup.cmd`, a recomp-launcher manifest, the self-test (VGA, x87, OPL

@@ -265,7 +265,7 @@ def discover(im, extra):
                     add(o.far_seg, o.disp)
                 else:
                     arms = jump_table(im.code(cs), fn, ins)
-                    if not arms and cs in im.blobs:
+                    if cs in im.blobs:              # a found bound may be some other cmp's
                         add_blob_table(cs, ins)
                     if arms:
                         tbl[ip] = arms
@@ -287,6 +287,20 @@ def discover(im, extra):
                 d = im.decode(cs, v) if 0 < v < len(im.blobs[cs].data) else None
                 if d is not None and d.mnemonic != 'db':
                     add(cs, v)
+            elif (m == 'mov' and cs in im.blobs and o and o.type in (OpType.MEM, OpType.MOFFS)
+                  and o.seg == 'cs' and ins.op2 is not None and ins.op2.type == OpType.REG16):
+                # `mov ax, offset / ... / mov cs:[x], ax`: the same, through a register.
+                # The bytes just before are decoded linearly here, since the walk
+                # may not have reached them yet (`mov ax,a / cmp / jb / mov ax,b`).
+                reg, data = repr(ins.op2), im.blobs[cs].data
+                for back in range(1, 17):
+                    j = im.decode(cs, (ip - back) & 0xFFFF)
+                    if not j or j.mnemonic != 'mov' or repr(j.op1) != reg or j.op2 is None                             or j.op2.type != OpType.IMM16 or ((ip - back) + j.length) > ip:
+                        continue
+                    v = j.op2.disp & 0xFFFF
+                    d = im.decode(cs, v) if 0 < v < len(data) else None
+                    if d is not None and d.mnemonic != 'db':
+                        add(cs, v)
             todo.append(nxt)
         bodies[lin] = fn
         tables[lin] = tbl

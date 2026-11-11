@@ -123,6 +123,10 @@ int main(int argc, char **argv)
     }
     { void vgaprof_report(void); vgaprof_report(); }
     if (shot) host_snapshot(shot);
+    if (getenv("WC_MEMDUMP")) {         /* debugging: conventional memory at exit */
+        FILE *f = fopen(getenv("WC_MEMDUMP"), "wb");
+        if (f) { fwrite(g_cpu.mem, 1, 0x100000, f); fclose(f); }
+    }
     host_shutdown();
     return g_exit_code;
 }

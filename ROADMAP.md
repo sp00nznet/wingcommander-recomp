@@ -1,12 +1,11 @@
 # Roadmap
 
 ## Next
-- Finish the miss loop on the drivers until the game draws its first screen
-  (see the README's status table), then the intro, the main menu, the bar
-  and the first mission's briefing and launch.
-- Commit `tools/wc1_seeds.txt` (addresses only) once the miss list settles,
-  and have `Setup.cmd` run the one capture round a fresh clone needs (lift,
-  build, run headless once so the drivers are captured, lift and build again).
+- The pilot sign-in: typed keys do not reach it and the screen stops
+  changing ([docs/lifting.md](docs/lifting.md), section 6). Then the bar,
+  the briefing, the launch and the first mission (Hornet, Enyo system).
+- `Setup.cmd` from a clean clone: it now runs the one capture round a fresh
+  lift needs; not yet tried end to end.
 - Sound: the drivers are lifted, so the AdLib path should come for free once
   the game is told it has one (WINGCMDR.CFG / INSTALL.DAT).
 - A conformance harness (REPO_RULES section 9): scripted headless runs with a

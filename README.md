@@ -1,5 +1,7 @@
 # Wing Commander: Static Recompilation
 
+<img src="docs/screenshots/signin.png" width="480" alt="The Tiger's Claw simulator, where a new pilot signs in, running as recompiled native code">
+
 ## What it is
 
 A static recompilation of **Wing Commander** (Origin Systems, 1990), the DOS
@@ -26,21 +28,22 @@ and before it [Corridor 7](https://github.com/sp00nznet/corridor7) and
 and the lifted C is generated on your machine into `work/` (gitignored).
 Nothing from the game is in this repository.
 
-## Status: **v0.1.0, early alpha. STATUS_LINE**
+## Status: **v0.1.0, early alpha. The intro, the copy check, the main menu and the pilot sign-in run; typing at the sign-in does not get through yet.**
 
 | Area | State |
 |---|---|
 | Version recompiled | `WC1\WC.EXE` from *Wing Commander & Wing Commander II* (USA) CD, 304,976 bytes |
-| Lift (`tools/lift.py wc1`) | LIFT_LINE |
+| Lift (`tools/lift.py wc1`) | 2,163 functions (40 overlays resident, 2 run-time drivers), 116,093 instructions, 0 unresolved; pcrecomp's own decoder, no IDA |
 | Borland VROOMM overlays | ✅ 40 made resident (pcrecomp `tools/drm/vroomm.py`) |
 | EMS | ✅ detected and filled ("Expanded Memory fully used") |
-| The `.DRV` drivers it unpacks at run time | DRV_LINE |
-| Title, intro, main menu | SCREEN_LINE |
+| The `.DRV` drivers it unpacks at run time | ✅ `TM.DRV` and `SUPERTM.DRV` captured at 36B4h and 3B93h on the first run and lifted on the next (pcrecomp `codeblob16`); 52 driver entries, no misses on the paths below |
+| Title, intro, main menu | ✅ the concert-hall intro, the Earth flyby and the credits; the *Claw Marks* copy question (answer it); "Start Vega Campaign" |
+| Pilot sign-in (the simulator screen) | ⚠️ draws, with the disc's saved pilot filled in, but keys typed there do not reach it and the screen stops updating |
 | The first mission | ❌ not reached |
 | Sound and music | ❌ not yet (no sound card configured) |
 | Wing Commander II (`wingcommander2`) | lifts (124 overlays, 2,076 functions); not run yet |
 | Headless mode | `--headless` with `--seconds`, `--keys`, `--shot-at`; `--record out.mp4` pipes to ffmpeg |
-| Self-test (`selftest.exe`, no game data) | SELFTEST_LINE |
+| Self-test (`selftest.exe`, no game data) | ✅ passes: the VGA, x87 and Sound Blaster/AdLib models |
 | Conformance harness against the game | not yet ([ROADMAP](ROADMAP.md)) |
 | `Setup.cmd` | written, not yet run from a clean clone; a fresh lift also needs one capture round ([ROADMAP](ROADMAP.md)) |
 | Installer (recomp-launcher) | `launcher/launcher.json` and a manual-run workflow; no installer has been built yet |
@@ -48,7 +51,16 @@ Nothing from the game is in this repository.
 
 ## Screenshots
 
-SCREENSHOTS
+Real output of the recompiled game:
+
+| | |
+|---|---|
+| ![The concert hall](docs/screenshots/intro-concert.png) | ![Earth](docs/screenshots/intro-earth.png) |
+| The intro | The Earth flyby |
+| ![A fighter](docs/screenshots/intro-fighter.png) | ![Credits](docs/screenshots/intro-credits.png) |
+| A Kilrathi fighter in the intro | The credits |
+| ![Main menu](docs/screenshots/menu.png) | ![Sign-in](docs/screenshots/signin.png) |
+| The main menu | The new pilot sign-in, in the simulator |
 
 ## Getting Started
 
@@ -105,8 +117,8 @@ with C++*. ffmpeg on `PATH` only for `--record`.
    ```
 5. **Capture the drivers, once.** A fresh lift has never seen the `.DRV`
    code. Run it headless, which captures the drivers into
-   `work\wc1\blobs\` and records the calls it could not make, then lift and
-   build again:
+   `work\wc1\blobs\` (the entry points it needs are already in
+   `tools\wc1_seeds.txt`), then lift and build again:
    ```
    build\Release\wingcommander.exe --headless --seconds 20
    py tools\lift.py wc1
@@ -114,7 +126,9 @@ with C++*. ffmpeg on `PATH` only for `--record`.
    ```
    The lift then prints `blobs: 36B4 (...) at 10000, 3B93 (...) at 11000`.
 6. **Play**, from this folder (it reads `original\wc1` and keeps saves in
-   `saves\wc1`): `build\Release\wingcommander.exe`.
+   `saves\wc1`): `build\Release\wingcommander.exe`. Esc skips the intro.
+   The copy check asks a question from the *Claw Marks* manual. "Start Vega
+   Campaign" is clicked with the mouse.
 
 The usual trip-ups: `python` opening the Microsoft Store (that is Windows'
 alias placeholder; use `py`); a freshly installed tool not being on `PATH`
