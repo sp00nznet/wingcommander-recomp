@@ -41,7 +41,7 @@ Nothing from the game is in this repository.
 | Pilot sign-in (the simulator screen) | ⚠️ draws, with the disc's saved pilot filled in, but keys typed there do not reach it and the screen stops updating |
 | The first mission | ❌ not reached |
 | Sound and music | ❌ not yet (no sound card configured) |
-| Wing Commander II (`wingcommander2`) | lifts (124 overlays, 2,076 functions); not run yet |
+| Wing Commander II (`wingcommander2`) | lifts (124 overlays, 2,076 functions); not built or run yet |
 | Headless mode | `--headless` with `--seconds`, `--keys`, `--shot-at`; `--record out.mp4` pipes to ffmpeg |
 | Self-test (`selftest.exe`, no game data) | ✅ passes: the VGA, x87 and Sound Blaster/AdLib models |
 | Conformance harness against the game | not yet ([ROADMAP](ROADMAP.md)) |
