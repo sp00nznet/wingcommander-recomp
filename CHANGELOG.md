@@ -5,6 +5,28 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- The first mission flies: the sign-in takes typed keys, the bar, barracks,
+  briefing and launch, and the Hornet's cockpit at Enyo with keyboard control
+  (one more `TM.DRV` entry, `36B4:401D`, in `tools/wc1_seeds.txt`). Scripted
+  `MOVE@` hovers so menu clicks land.
+- `CONTRIBUTING.md`, `CONTRIBUTORS.md`, `docs/building.md`, `docs/testing.md`.
+- `setup.sh`, which says there is no Linux or macOS build yet and stops.
+
+### Fixed
+- `Setup.cmd` from a fresh clone stopped at the driver capture: the first run
+  exits with code 3, captures junk segments (`08F2`, `2B00`) whose lift breaks
+  the link, and sees only `TM.DRV`. It now ignores the exit code, keeps only
+  the two drivers, runs up to three rounds until both are in, and configures
+  again before each rebuild so the new lifted files are in the project.
+
+### Changed
+- README in the house order (Getting Started, Status, Screenshots,
+  Documentation, Contributors, License); the step-by-step build and the
+  command line moved to `docs/building.md` and `docs/testing.md`.
+- `NOTICE` is now `NOTICE.md`, saying what the MIT license covers and what it
+  does not.
+
 ## [0.1.0] - 2026-11-11
 
 ### Added

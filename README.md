@@ -1,34 +1,58 @@
-# Wing Commander: Static Recompilation
+# Wing Commander — Static Recompilation
+
+Static recompilation of **Wing Commander** (Origin Systems, 1990), the DOS
+version on the *Wing Commander & Wing Commander II* CD, from its shipping
+executable to C, built as a native Windows program. `WC.EXE` is a real-mode
+Borland C++ program with 40 Borland VROOMM overlays, EMS, VGA mode 13h and
+Origin's own compressed `.DRV` drivers, which it unpacks into its heap and
+calls at run time; its 2,100-odd functions are lifted to C (the overlays made
+resident first, the drivers captured on the first run and lifted on the next),
+and `src/` is a small model of a 1990 PC (DOS, VGA, EMS, the timer, the
+keyboard, an OPL2) for it to run on. No DOSBox, no emulator.
+
+Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, on
+its **`pcrecomp-dos16-wc`** branch (not yet merged into `main`), whose 16-bit
+decoder and lifter do the work, no IDA. The runtime and lifter came from the
+[Mario Is Missing DOS recomp](https://github.com/sp00nznet/marioismissing-dos).
 
 <img src="docs/screenshots/cockpit.png" width="480" alt="The Hornet cockpit on the first mission, Enyo system, running as recompiled native code">
 
-## What it is
+## Getting Started
 
-A static recompilation of **Wing Commander** (Origin Systems, 1990), the DOS
-version on the *Wing Commander & Wing Commander II* CD, from its shipping
-executable to C, built as a native Windows program. No DOSBox, no emulator.
-Wing Commander II, from the same disc, lifts and builds too and is next.
+You need **your own copy**: the *Wing Commander & Wing Commander II* CD (or a
+mounted image of it, or a copy of its `WC1` folder). Nothing from the game is
+in this repository or downloaded for you; everything is built on your machine
+from your copy.
 
-`WC.EXE` is a real-mode Borland C++ program with 40 Borland VROOMM overlays,
-EMS, VGA mode 13h and Origin's own compressed `.DRV` drivers, which it unpacks
-into its heap and calls at run time. [pcrecomp](https://github.com/sp00nznet/pcrecomp)'s
-16-bit decoder and lifter turn its 2,100-odd functions to C (the overlays
-made resident first, the drivers captured on the first run and lifted on the
-next); `src/` is a small model of a 1990 PC (DOS, VGA, EMS, the timer, the
-keyboard, an OPL2) for it to run on.
+### The setup scripts
 
-Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain and
-following its shared house style (layout, CLI, conformance harness, headless
-mode), like the other recomps there. The runtime and lifter came from the
-[Mario Is Missing DOS recomp](https://github.com/sp00nznet/marioismissing-dos),
-and before it [Corridor 7](https://github.com/sp00nznet/corridor7) and
-[Blake Stone](https://github.com/sp00nznet/blakestone).
+1. Download this repository (the green **Code** button, then **Download ZIP**)
+   and unzip it somewhere with 1 GB free.
+2. Windows: put the disc in (or mount its image) and double-click
+   **`Setup.cmd`**. Linux and macOS: not yet (`setup.sh` says so and stops).
+3. Play with the **`Wing Commander`** shortcut in that folder.
 
-**Generated source is not distributed.** You supply your own copy of the game,
-and the lifted C is generated on your machine into `work/` (gitignored).
-Nothing from the game is in this repository.
+The script checks for Python 3, CMake, Git and the Visual Studio 2022 C++
+build tools, and asks before installing any of them with winget. It finds
+`WC1\WC.EXE` on any drive or asks where it is (`Setup.cmd -GameDir E:\`
+skips the question, `-Yes` answers yes to every install), copies the `WC1`
+folder into `original\wc1`, clones pcrecomp's `pcrecomp-dos16-wc` branch
+beside this folder (as `pcrecomp-dos16-wc`), lifts `WC.EXE`, builds, runs the
+self-test, then runs headless capture rounds (two, usually) until both of the
+game's drivers are captured, lifting and building again after each, and leaves
+the shortcut. A rerun skips finished steps (`-Force` redoes
+the lift); if it stops, it says why in one sentence and the details are in
+`setup.log`. Building by hand and the command line are in
+**[docs/building.md](docs/building.md)**.
 
-## Status: **v0.1.0, early alpha. In game: the first mission (Hornet, Enyo, Nav 1) flies, with keyboard control, from the sign-in through the bar, the barracks and the briefing.**
+Esc skips the intro. The copy check asks a question from the *Claw Marks*
+manual. "Start Vega Campaign" is clicked with the mouse.
+
+## Status
+
+**v0.1.0, early alpha: the first mission flies.** From the sign-in through the
+bar, the barracks and the briefing to the Hornet's cockpit at Enyo, Nav 1,
+with keyboard control.
 
 | Area | State |
 |---|---|
@@ -46,9 +70,12 @@ Nothing from the game is in this repository.
 | Headless mode | `--headless` with `--seconds`, `--keys`, `--shot-at`; `--record out.mp4` pipes to ffmpeg |
 | Self-test (`selftest.exe`, no game data) | ✅ passes: the VGA, x87 and Sound Blaster/AdLib models |
 | Conformance harness against the game | not yet ([ROADMAP](ROADMAP.md)) |
-| `Setup.cmd` | written, not yet run from a clean clone; a fresh lift also needs one capture round ([ROADMAP](ROADMAP.md)) |
-| Installer (recomp-launcher) | `launcher/launcher.json` and a manual-run workflow; no installer has been built yet |
+| `Setup.cmd` | tested from a fresh clone against a copy of the CD's `WC1`: two capture rounds, the shortcut, and a headless run with no misses |
 | Toolkit | pcrecomp's `pcrecomp-dos16-wc` branch (off `pcrecomp-ne-nativemap`), not merged into `main` yet |
+| Linux, macOS | not yet |
+
+[docs/lifting.md](docs/lifting.md) is the log of each wall and its fix, and
+[ROADMAP.md](ROADMAP.md) what comes next.
 
 ## Screenshots
 
@@ -65,121 +92,21 @@ Real output of the recompiled game:
 | ![Cockpit](docs/screenshots/cockpit.png) | |
 | The first mission, in the Hornet's cockpit | |
 
-## Getting Started
+## Documentation
 
-You need **your own Wing Commander & Wing Commander II CD** (or a mounted
-image of it, or a copy of its `WC1` folder) and about 1 GB free. Nothing is
-downloaded for you.
+- [docs/building.md](docs/building.md): building by hand, the command line, netlab
+- [docs/testing.md](docs/testing.md): the self-test, headless runs, scripted keys and clicks
+- [docs/architecture.md](docs/architecture.md): the pipeline and the machine model
+- [docs/lifting.md](docs/lifting.md): the disc, VROOMM, EMS, the drivers unpacked at run time, every wall so far
+- [ROADMAP.md](ROADMAP.md), [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md)
 
-### Quick start: Setup.cmd
+## Contributors
 
-1. Download this repository (the green **Code** button, then **Download ZIP**)
-   and unzip it.
-2. Put the disc in (or mount its image).
-3. Double-click **`Setup.cmd`**.
-
-It checks for Python 3, CMake, Git and the Visual Studio 2022 C++ build tools,
-and **asks** before installing any of them with winget, saying what and how
-big. It finds `WC1\WC.EXE` on any drive, or asks where it is
-(`Setup.cmd -GameDir E:\` skips the question, `-Yes` answers yes to every
-install). Then it copies the `WC1` folder into `original\wc1`, clones
-pcrecomp's `pcrecomp-dos16-wc` branch beside this folder (as
-`pcrecomp-dos16-wc`), lifts `WC.EXE`, builds, runs the self-test, and leaves
-a **`Wing Commander`** shortcut in this folder. A rerun skips finished steps
-(`-Force` redoes the lift). If it stops, it says why in one sentence, and the
-details are in `setup.log`.
-
-### Step by step
-
-Prerequisites: Windows 10/11, Python 3.10+ (`py --version`), CMake 3.20+,
-Git, and Visual Studio 2022 (or its Build Tools) with *Desktop development
-with C++*. ffmpeg on `PATH` only for `--record`.
-
-1. **The toolkit**, beside this folder, on its `pcrecomp-dos16-wc` branch:
-   ```
-   git clone --branch pcrecomp-dos16-wc https://github.com/sp00nznet/pcrecomp ..\pcrecomp-dos16-wc
-   set PCRECOMP_HOME=%CD%\..\pcrecomp-dos16-wc
-   ```
-   Without `PCRECOMP_HOME`, `tools\lift.py` and CMake look for
-   `..\pcrecomp-dos16-wc`, then `..\pcrecomp`.
-2. **Your game files**: copy the CD's `WC1` folder, all of it, into
-   `original\wc1\` (so that `original\wc1\WC.EXE` exists). For Wing
-   Commander II, `WING2\GAMEDAT\*` and `WING2\WC2.EXE` into `original\wc2\`.
-3. **Lift**:
-   ```
-   > py tools\lift.py wc1
-     overlays: 40 placed resident, 162253 bytes, 867 entries
-   WC.EXE: DGROUP 1231, ... functions, ... instructions lifted, ...
-     -> ...\work\wc1\gen
-   ```
-4. **Build** (a few minutes):
-   ```
-   cmake -B build -A Win32 -DPCRECOMP_HOME=%PCRECOMP_HOME%
-   cmake --build build --config Release --target wingcommander selftest -- -m
-   build\Release\selftest.exe
-   ```
-5. **Capture the drivers, once.** A fresh lift has never seen the `.DRV`
-   code. Run it headless, which captures the drivers into
-   `work\wc1\blobs\` (the entry points it needs are already in
-   `tools\wc1_seeds.txt`), then lift and build again:
-   ```
-   build\Release\wingcommander.exe --headless --seconds 20
-   py tools\lift.py wc1
-   cmake --build build --config Release --target wingcommander -- -m
-   ```
-   The lift then prints `blobs: 36B4 (...) at 10000, 3B93 (...) at 11000`.
-6. **Play**, from this folder (it reads `original\wc1` and keeps saves in
-   `saves\wc1`): `build\Release\wingcommander.exe`. Esc skips the intro.
-   The copy check asks a question from the *Claw Marks* manual. "Start Vega
-   Campaign" is clicked with the mouse.
-
-The usual trip-ups: `python` opening the Microsoft Store (that is Windows'
-alias placeholder; use `py`); a freshly installed tool not being on `PATH`
-until you open a new window; and a `..\pcrecomp` on `main`, which lacks
-`codeblob16.py` and `vroomm.py`.
-
-## Usage
-
-```
-build\Release\wingcommander.exe                                   # play, in a window
-build\Release\wingcommander.exe --headless --seconds 40 --shot-at "20000:C:\tmp\wc.bmp"
-build\Release\wingcommander.exe --headless --keys "8000:ENTER,9000:SPACE" --record run.mp4
-build\Release\selftest.exe                                         # the hardware models, no game data
-```
-
-| Flag | |
-|---|---|
-| `--data DIR`, `--save DIR` | the game's files (default `original\wc1`), saves (default `saves\wc1`) |
-| `--headless` | no window, no audio device; time is deterministic |
-| `--realtime` | headless, but on the wall clock |
-| `--record OUT.mp4` | video and audio through ffmpeg |
-| `--seconds N` | quit after N seconds of emulated time |
-| `--keys LIST` | scripted input, `ms:KEY[+holdms],...`; `CLICK@x;y` clicks and `MOVE@x;y` hovers at mouse coordinates (0-639, 0-199) |
-| `--shot FILE.bmp`, `--shot-at "ms:file.bmp,..."` | the last frame at exit, or frames at emulated times |
-| `--wav OUT.wav` | write the audio |
-| `--mute`, `--scale N`, `--fullscreen`, `--display sharp\|pixel\|crt` | sound off, window size, fullscreen (Alt+Enter toggles), display mode |
-| `--trace` | log DOS and EMS calls to stderr |
-
-The full list is at the top of [`src/main.c`](src/main.c).
-
-## Building from source
-
-Steps 1 to 5 above; `Setup.cmd` runs the same commands. How the pieces fit is
-[docs/architecture.md](docs/architecture.md) (the pipeline and the machine
-model, from Blake Stone); what this game needed (the disc, VROOMM, EMS, and
-the drivers it unpacks at run time) is [docs/lifting.md](docs/lifting.md).
-The self-test builds without any game data, so it builds and runs on its own.
-
-## Credits
-
-The runtime and lifter came from the
-[Mario Is Missing DOS recomp](https://github.com/sp00nznet/marioismissing-dos),
-and before it [Corridor 7](https://github.com/sp00nznet/corridor7) and
-[Blake Stone](https://github.com/sp00nznet/blakestone).
-[ymfm](https://github.com/aaronsgiles/ymfm) (BSD-3-Clause). See [NOTICE](NOTICE).
+See **[CONTRIBUTORS.md](CONTRIBUTORS.md)** for who did what.
 
 ## License
 
-MIT for the code in this repository; see [LICENSE](LICENSE), and
-[NOTICE](NOTICE) for the third-party code. Wing Commander is commercial
-software (Origin Systems, now Electronic Arts) and is not included.
+MIT for this repository's own code ([LICENSE](LICENSE));
+[ymfm](https://github.com/aaronsgiles/ymfm) is BSD-3-Clause. Wing Commander is
+© 1990 Origin Systems (now Electronic Arts); none of its files, and nothing
+generated from them, is in this repository ([NOTICE.md](NOTICE.md)).

@@ -4,8 +4,6 @@
 - The first mission: it flies; fly it to the end (Nav points, the
   Kilrathi, landing) and check the speed (the range to Nav 1 grows about
   30 times too fast) ([docs/lifting.md](docs/lifting.md), section 6).
-- `Setup.cmd` from a clean clone: it now runs the one capture round a fresh
-  lift needs; not yet tried end to end.
 - Sound: the drivers are lifted, so the AdLib path should come for free once
   the game is told it has one (WINGCMDR.CFG / INSTALL.DAT).
 - A conformance harness (REPO_RULES section 9): scripted headless runs with a
@@ -18,6 +16,10 @@
 - The Secret Missions (`SM1\`, `SM2\` on the CD) are data for WC1, and
   Special Operations (`SO1.EXE`, `SO2.EXE`) are separate WC2 executables.
 - Build and publish the recomp-launcher installer.
+- Linux and macOS: a `setup.sh` that really builds (the SDL2 host from Blake
+  Stone is here, untested), or a tested Wine path.
+- Merge pcrecomp's `pcrecomp-dos16-wc` into `main` and point Setup and the
+  launcher at `main`.
 
 ## Toolkit (pcrecomp)
 - Junk captures: a corrupted state far-calls garbage and that gets captured

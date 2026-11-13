@@ -12,7 +12,7 @@
 
   Every step is skipped when its result is already there (-Force redoes the
   lift), so running it again after a failure carries on. Details go to
-  setup.log. It runs exactly the commands README "Step by step" lists.
+  setup.log. It runs exactly the commands docs/building.md "Step by step" lists.
 
   Nothing from the game is downloaded or bundled: the files come from your own
   disc, and everything generated from them stays in work\ and build\.
@@ -157,13 +157,31 @@ Run "compiling" { cmake --build build --config Release --target wingcommander se
 $exe = Join-Path $Root "build\Release\wingcommander.exe"
 if (-not (Test-Path $exe)) { Fail "The build finished but $exe is missing." }
 Run "self-test (the hardware models, no game data)" { & build\Release\selftest.exe }
-# The .DRV drivers exist only once the game has unpacked them: one headless run
-# captures them into work\wc1\blobs, then they are lifted and built in.
-if (-not (Test-Path "work\wc1\blobs\*.bin")) {
-    Run "capturing the drivers (one headless run)" { & $exe --headless --seconds 20 | Out-Null }
+# The .DRV drivers exist only once the game has unpacked them: a headless run
+# captures them into work\wc1\blobs, then they are lifted and built in. The
+# first run sees only TM.DRV (36B4); with it lifted, the next run reaches
+# SUPERTM.DRV (3B93). A run that misses can also capture junk segments, and
+# lifting those breaks the link, so only the two drivers are kept. The run's
+# exit code means nothing here (an uncaptured driver ends it); the blobs do.
+$Drivers = @('36B4', '3B93')
+for ($round = 1; $round -le 3; $round++) {
+    $missing = @($Drivers | Where-Object { -not (Test-Path "work\wc1\blobs\$_.bin") })
+    if ($missing.Count -eq 0) { break }
+    Say "  capturing the drivers (headless run $round)"
+    # its thousands of [miss] lines go nowhere; stderr must not trip 'Stop'
+    $eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    & $exe --headless --seconds 20 2>&1 | Out-Null
+    $ErrorActionPreference = $eap
+    Get-ChildItem "work\wc1\blobs\*.bin" -ErrorAction SilentlyContinue |
+        Where-Object { $Drivers -notcontains $_.BaseName } | Remove-Item -Force
     Run "lifting again, with the drivers" { & $py tools\lift.py wc1 }
+    # a driver adds lifted files: configure again so the project lists them
+    # (MSBuild would only pick them up on the build after this one)
+    Run "configuring again" { cmake -B build -A Win32 "-DPCRECOMP_HOME=$pcr" }
     Run "compiling again" { cmake --build build --config Release --target wingcommander -- -m }
 }
+$missing = @($Drivers | Where-Object { -not (Test-Path "work\wc1\blobs\$_.bin") })
+if ($missing.Count) { Fail "the game's drivers ($($missing -join ', ')) were not captured." }
 
 # ---- 6. shortcut -------------------------------------------------------------------
 Say "[6/6] Making the shortcut"
