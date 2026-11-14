@@ -11,7 +11,7 @@ and `src/` is a small model of a 1990 PC (DOS, VGA, EMS, the timer, the
 keyboard, an OPL2) for it to run on. No DOSBox, no emulator.
 
 Built on the [pcrecomp](https://github.com/sp00nznet/pcrecomp) toolchain, on
-its **`pcrecomp-dos16-wc`** branch (not yet merged into `main`), whose 16-bit
+its `main` branch, whose 16-bit
 decoder and lifter do the work, no IDA. The runtime and lifter came from the
 [Mario Is Missing DOS recomp](https://github.com/sp00nznet/marioismissing-dos).
 
@@ -36,8 +36,8 @@ The script checks for Python 3, CMake, Git and the Visual Studio 2022 C++
 build tools, and asks before installing any of them with winget. It finds
 `WC1\WC.EXE` on any drive or asks where it is (`Setup.cmd -GameDir E:\`
 skips the question, `-Yes` answers yes to every install), copies the `WC1`
-folder into `original\wc1`, clones pcrecomp's `pcrecomp-dos16-wc` branch
-beside this folder (as `pcrecomp-dos16-wc`), lifts `WC.EXE`, builds, runs the
+folder into `original\wc1`, clones pcrecomp
+beside this folder (as `pcrecomp`), lifts `WC.EXE`, builds, runs the
 self-test, then runs headless capture rounds (two, usually) until both of the
 game's drivers are captured, lifting and building again after each, and leaves
 the shortcut. A rerun skips finished steps (`-Force` redoes
@@ -71,7 +71,7 @@ with keyboard control.
 | Self-test (`selftest.exe`, no game data) | ✅ passes: the VGA, x87 and Sound Blaster/AdLib models |
 | Conformance harness against the game | not yet ([ROADMAP](ROADMAP.md)) |
 | `Setup.cmd` | tested from a fresh clone against a copy of the CD's `WC1`: two capture rounds, the shortcut, and a headless run with no misses |
-| Toolkit | pcrecomp's `pcrecomp-dos16-wc` branch (off `pcrecomp-ne-nativemap`), not merged into `main` yet |
+| Toolkit | pcrecomp `main` |
 | Linux, macOS | not yet |
 
 [docs/lifting.md](docs/lifting.md) is the log of each wall and its fix, and

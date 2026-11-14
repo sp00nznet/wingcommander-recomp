@@ -8,13 +8,13 @@ Prerequisites: Windows 10/11, Python 3.10+ (`py --version`), CMake 3.20+,
 Git, and Visual Studio 2022 (or its Build Tools) with *Desktop development
 with C++*. ffmpeg on `PATH` only for `--record`.
 
-1. **The toolkit**, beside this folder, on its `pcrecomp-dos16-wc` branch:
+1. **The toolkit**, beside this folder (`main`):
    ```
-   git clone --branch pcrecomp-dos16-wc https://github.com/sp00nznet/pcrecomp ..\pcrecomp-dos16-wc
-   set PCRECOMP_HOME=%CD%\..\pcrecomp-dos16-wc
+   git clone https://github.com/sp00nznet/pcrecomp ..\pcrecomp
+   set PCRECOMP_HOME=%CD%\..\pcrecomp
    ```
    Without `PCRECOMP_HOME`, `tools\lift.py` and CMake look for
-   `..\pcrecomp-dos16-wc`, then `..\pcrecomp`.
+   `..\pcrecomp`.
 2. **Your game files**: copy the CD's `WC1` folder, all of it, into
    `original\wc1\` (so that `original\wc1\WC.EXE` exists). For Wing
    Commander II, `WING2\GAMEDAT\*` and `WING2\WC2.EXE` into `original\wc2\`.

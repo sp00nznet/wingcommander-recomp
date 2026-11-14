@@ -2,7 +2,7 @@
 
 What this game needed beyond the Mario Is Missing recomp this repository was
 forked from, in the order it turned up. Everything generic went into pcrecomp
-(branch `pcrecomp-dos16-wc`).
+(now on `main`).
 
 ## 1. The disc
 

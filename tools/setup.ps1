@@ -29,10 +29,9 @@ Set-Location $Root
 $Log = Join-Path $Root "setup.log"
 "=== setup $(Get-Date -Format s)" | Out-File $Log -Encoding utf8
 
-# The toolkit commit this game was last lifted, built and run against
-# (README, "Building from source"). A commit, not a branch: main moves.
+# The toolkit: pcrecomp main (docs/building.md).
 $PcrecompUrl = "https://github.com/sp00nznet/pcrecomp.git"
-$PcrecompRef = "pcrecomp-dos16-wc"
+$PcrecompRef = "main"
 
 function Say($m) { Write-Host $m; $m | Out-File $Log -Append -Encoding utf8 }
 function Fail($m) {
@@ -130,7 +129,7 @@ Say "[3/6] Fetching the pcrecomp toolkit"
 if ($env:PCRECOMP_HOME -and (Test-Path "$env:PCRECOMP_HOME\tools\lift\codeblob16.py")) {
     $pcr = $env:PCRECOMP_HOME
 } else {
-    $pcr = Join-Path (Split-Path $Root -Parent) "pcrecomp-dos16-wc"
+    $pcr = Join-Path (Split-Path $Root -Parent) "pcrecomp"
     if (-not (Test-Path "$pcr\tools\lift\codeblob16.py")) {
         Run "fetching pcrecomp into $pcr (about 20 MB)" { git clone --quiet $PcrecompUrl $pcr }
         Run "checking out pcrecomp $PcrecompRef" { git -C $pcr checkout --quiet $PcrecompRef }

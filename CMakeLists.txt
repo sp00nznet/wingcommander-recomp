@@ -19,7 +19,7 @@ option(BSTONE_TRACE "record lifted calls and enable BSTONE_WATCH (slow)" OFF)
 # pcrecomp supplies the CPU model (runtime/recomp16/cpu.h) and codeblob.h the lifted C uses.
 set(PCRECOMP_HOME "$ENV{PCRECOMP_HOME}" CACHE PATH "pcrecomp checkout")
 if(NOT PCRECOMP_HOME)
-    foreach(cand ../pcrecomp-dos16-wc ../pcrecomp ../pcrecomp-main)
+    foreach(cand ../pcrecomp ../pcrecomp-main)
         if(EXISTS "${CMAKE_SOURCE_DIR}/${cand}/runtime/recomp16/codeblob.h")
             get_filename_component(PCRECOMP_HOME "${CMAKE_SOURCE_DIR}/${cand}" ABSOLUTE)
             break()

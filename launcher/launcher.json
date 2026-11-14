@@ -9,7 +9,7 @@
     "name": "Wing Commander",
     "files": ["WC.EXE|WC1/WC.EXE|wc.exe|wc1/wc.exe"]
   },
-  "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "pcrecomp-dos16-wc", "dir": "pcrecomp" }],
+  "sources": [{ "repo": "sp00nznet/pcrecomp", "ref": "main", "dir": "pcrecomp" }],
   "setup": {
     "windows": ["cmd", "/c", "Setup.cmd", "-Yes", "-GameDir", "{game}"]
   },

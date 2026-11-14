@@ -18,8 +18,6 @@
 - Build and publish the recomp-launcher installer.
 - Linux and macOS: a `setup.sh` that really builds (the SDL2 host from Blake
   Stone is here, untested), or a tested Wine path.
-- Merge pcrecomp's `pcrecomp-dos16-wc` into `main` and point Setup and the
-  launcher at `main`.
 
 ## Toolkit (pcrecomp)
 - Junk captures: a corrupted state far-calls garbage and that gets captured

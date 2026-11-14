@@ -58,8 +58,7 @@ def _pcrecomp_home():
     """PCRECOMP_HOME, else a sibling checkout -- never one person's drive."""
     env = os.environ.get('PCRECOMP_HOME')
     cands = [env] if env else []
-    cands += [os.path.join(os.path.dirname(ROOT), 'pcrecomp-dos16-wc'),
-              os.path.join(os.path.dirname(ROOT), 'pcrecomp'),
+    cands += [os.path.join(os.path.dirname(ROOT), 'pcrecomp'),
               os.path.join(os.path.dirname(ROOT), 'pcrecomp-main')]
     for c in cands:
         if c and os.path.isfile(os.path.join(c, 'tools', 'lift', 'codeblob16.py')):

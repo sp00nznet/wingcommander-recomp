@@ -21,6 +21,7 @@ versions follow [SemVer](https://semver.org/).
   again before each rebuild so the new lifted files are in the project.
 
 ### Changed
+- Builds against pcrecomp main; the `pcrecomp-dos16-wc` branch is merged.
 - README in the house order (Getting Started, Status, Screenshots,
   Documentation, Contributors, License); the step-by-step build and the
   command line moved to `docs/building.md` and `docs/testing.md`.
