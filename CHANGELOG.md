@@ -5,6 +5,8 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-20
+
 ### Added
 - The first mission flies: the sign-in takes typed keys, the bar, barracks,
   briefing and launch, and the Hornet's cockpit at Enyo with keyboard control
