@@ -1,11 +1,12 @@
-# The installer for this commit (recomp-launcher with launcher/launcher.json).
-# Manual only while the repo is private (REPO_RULES section 8); on push and v*
-# tags once it is public, like the other recomps. The installer holds no game
-# code: it fetches this repo and pcrecomp as source and builds from the
-# player's own disc.
+# The installer for this commit (recomp-launcher with launcher/launcher.json):
+# an artifact on every push to main, a release file on a v* tag. It holds no
+# game code: it builds from the player's own copy.
 name: installer
 
 on:
+  push:
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
